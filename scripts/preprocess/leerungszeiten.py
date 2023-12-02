@@ -2,6 +2,8 @@ from os.path import join, abspath, dirname, isdir
 import pandas as pd
 from matplotlib import pyplot as plt
 from scipy.signal import savgol_filter
+import datetime
+from typing import Tuple
 
 
 def get_sensor_data_dir() -> str:
@@ -19,7 +21,7 @@ def get_sensor_data_dir() -> str:
 def detect_flanks_when_emptied(fill_percent: pd.Series):
     # Parameters for detection
     threshold_high = 35
-    threshold_low = 15
+    threshold_low = 20
     window_size = 48
 
     # Store timestamps of detected falling flanks
@@ -43,9 +45,9 @@ def detect_flanks_when_emptied(fill_percent: pd.Series):
 
 def process_color_dev(data_color_dev: pd.DataFrame,
                       device_id: str,
-                      color: str) -> list:
+                      color: str) -> Tuple[list, tuple]:
     # Apply Savitzky-Golay filter to the non-NaN values
-    window_length = 100  # Adjust as needed
+    window_length = 100  # Corresponds to 50 hours
     polyorder = 2  # Adjust as needed
     smoothed_data = savgol_filter(data_color_dev.data_distance, window_length, polyorder)
     data_color_dev["smoothed"] = smoothed_data
@@ -59,44 +61,68 @@ def process_color_dev(data_color_dev: pd.DataFrame,
     data_color_dev["fill_percent"] = fill_percent
     flanks: list = detect_flanks_when_emptied(data_color_dev["fill_percent"])
 
-    plt.subplot(2, 1, 1)
+
+    plt.figure(figsize=(7, 4))
+    # # Plot vertical line for empty times
+    # plt.vlines(flanks, ymin=0, ymax=3000,
+    #            color="black", alpha=0.7,
+    #            label="Entleerung")
     plt.plot(data_color_dev.index,
              data_color_dev.data_distance,
-             label="Rohdaten", alpha=0.5)
-    # ax = data_color_dev['data_distance'].plot(label='Original Data')
+             label="Rohdaten", alpha=0.4)
 
     plt.plot(data_color_dev.index,
              smoothed_data,
              label="Gefiltert")
-    # data_color_dev.smoothed.plot(ax=ax, label='Smoothed Data')
+    for flank in flanks:
+        entleer_marker = data_color_dev[data_color_dev.index.isin([flank])]['smoothed']
+        if len(entleer_marker) == 1 and len([flank]) == 1:
+            plt.scatter([flank], [entleer_marker],
+                        color="black", marker="s")
 
-    plt.title(f"{color}glas")
-    plt.ylabel("Distanz Glas vom Sensor in mm")
-    plt.legend()
+    plt.title(f"{color}glas Sensor {device_id[:6]}")
+    plt.ylabel("Distanzmessung in mm")
 
-    plt.subplot(2, 1, 2)
-    plt.plot(data_color_dev.index,
-             fill_percent)
-    plt.vlines(flanks, ymin=0, ymax=100, color="r")
+    plt.legend(loc='upper right')
+    # Set x-axis limits using plt.xlim()
+    start_date = datetime.datetime(2023, 1, 1)
+    end_date = datetime.datetime(2023, 12, 1)
+    quarters = pd.date_range(start=start_date, end=end_date, freq='QS')
+    plt.xticks(quarters)
+    plt.xlim(start_date, end_date)
+    plt.ylim([smoothed_data.max(), smoothed_data.min()])
+
     plt.savefig(f"{color}glas {device_id}")
-    plt.clf()
-    return flanks.tolist()
+
+    return flanks.tolist(), [min_mm, max_mm]
 
 
 def iterate_preprocess():
+    # Data Braunglas as json
     brown_json = join(get_sensor_data_dir(),
                       "fuellstandsensoren-glassammelstellen-braunglas.json")
-    df_brown = pd.read_json(brown_json)
-    result_timestamps: dict = dict()
 
-    for color, df in zip(["Braun"], [df_brown]):
+    # Data Weissglas
+    white_json = join(get_sensor_data_dir(),
+                      "fuellstandsensoren-glassammelstellen-weissglas.json")
+
+    # Data Grünglas
+    green_json = join(get_sensor_data_dir(),
+                      "fuellstandsensoren-glassammelstellen-gruenglas.json")
+
+    for color, json_file in zip(
+            ["Braun", "Weiss", "Grün"],
+            [brown_json, white_json, green_json]):
+        df = pd.read_json(json_file)
+        result_timestamps: dict = dict()
+        min_max_distance: dict = dict()
         color: str
         df: pd.DataFrame
         # Drop rows where 'data_distance' is NaN
         df = df.dropna(subset=['data_distance'])
         df = df[df['data_distance'] != 2500]
         # Convert the "measured_at" column to datetime format
-        df['measured_at'] = pd.to_datetime(df['measured_at'])
+        df['measured_at'] = pd.to_datetime(df['measured_at'], utc=True)
         # Set the "measured_at" column as the datetime index
         df.set_index('measured_at', inplace=True)
         for device_id in df.device_id.unique():
@@ -111,8 +137,17 @@ def iterate_preprocess():
                                    orient='records', date_format='iso')
             data_color_dev.set_index('measured_at', inplace=True)
 
-            timestamps: list = process_color_dev(data_color_dev, device_id, color)
+            timestamps, min_max_mm = process_color_dev(data_color_dev, device_id, color)
+            plt.clf()
+            timestamps: list
+            min_max_mm: list
+            min_max_distance[device_id] = min_max_mm
+
             result_timestamps[device_id] = pd.Series(timestamps)
+
+        min_max_distance: pd.DataFrame = pd.DataFrame(min_max_distance)
+        min_max_distance.index = ['empty', 'full']
+        min_max_distance.to_csv(f"Min Max {color}.csv")
 
         result_timestamps: pd.DataFrame = pd.DataFrame(result_timestamps)
         result_timestamps.to_csv(f"Leerungszeitpunkte {color}glas.csv", index=False)
@@ -121,10 +156,10 @@ def iterate_preprocess():
 if __name__ == "__main__":
     iterate_preprocess()
 
-    # df_color_dev = pd.read_json(join(get_sensor_data_dir(), "sample brown.json"),
-    #                             orient='records')
-    # df_color_dev.set_index('measured_at', inplace=True)
-    #
-    # process_color_dev(df_color_dev, None, "Braun")
-    # plt.show()
+    df_color_dev = pd.read_json(join(get_sensor_data_dir(), "sample brown.json"),
+                                orient='records')
+    df_color_dev.set_index('measured_at', inplace=True)
+
+    print(process_color_dev(df_color_dev, "Test", "Braun"))
+    plt.show()
 
