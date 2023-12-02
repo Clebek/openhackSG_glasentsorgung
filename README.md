@@ -46,3 +46,6 @@ Entsorgung St.Gallen wünscht sich einen Algorithmus, mit welchem die Sammlung o
 -[Füllstandsensoren](https://daten.stadt.sg.ch/explore/?q=F%C3%BCllstandsensoren&disjunctive.modified&disjunctive.publisher&disjunctive.theme&disjunctive.keyword&sort=modified)
 
 -[Bevölkerungsstatistiken über STADA2 abrufbar](https://stada2.sg.ch/)
+
+
+# Aufbau Repository
