@@ -1,4 +1,4 @@
-/data/*.csv
+/data/fuellstandsensoren*.csv
 /data/*.geojson
 .idea
 .venv
